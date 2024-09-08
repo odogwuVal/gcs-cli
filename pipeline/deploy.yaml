@@ -1,0 +1,83 @@
+# azure-pipelines.yml
+
+trigger:
+  branches:
+    include:
+      - main  # Adjust to your default branch
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  CLI_NAME: 'gcscli'  # Name of your CLI tool
+  OUTPUT_DIR: 'dist'  # Output directory for build artifacts
+
+
+steps:
+# Download secure files: key.json and .env
+- task: DownloadSecureFile@1
+  inputs:
+    secureFile: 'key.json'
+  displayName: 'Download key.json from secure files'
+  name: 'gcsKeyFile'  # This gives an alias to the downloaded file
+
+- task: DownloadSecureFile@1
+  inputs:
+    secureFile: '.env'
+  displayName: 'Download .env from secure files'
+
+  # Move the downloaded files to the correct locations in your working directory
+- script: |
+    mv $(Agent.TempDirectory)/key.json ./cmd/assets/key.json && mv $(Agent.TempDirectory)/.env ./cmd/assets/.env
+  displayName: 'Move key.json and .env to working directory'
+
+
+# Ensure correct permissions for the files
+- script: |
+    chmod 660 ./cmd/assets/key.json
+    chmod 660 ./cmd/assets/.env
+  displayName: 'Set file permissions for key.json and .env'
+
+- task: GoTool@0
+  inputs:
+    version: '1.22.2'  # Adjust the Go version as needed
+
+# Build CLI for macOS
+- script: |
+    mkdir -p $(OUTPUT_DIR)
+    GOOS=darwin GOARCH=amd64 go build -o $(OUTPUT_DIR)/gcscli
+  displayName: 'Build CLI for mac'
+
+# # Build CLI for linux
+# - script: |
+#     mkdir -p $(OUTPUT_DIR)
+#     GOOS=linux GOARCH=amd64 go build -o $(OUTPUT_DIR)/gcscli
+#   displayName: 'Build CLI for linux'
+
+# Build CLI for windows
+- script: |
+    mkdir -p $(OUTPUT_DIR)
+    GOOS=windows GOARCH=amd64 go build -o $(OUTPUT_DIR)/gcscli.exe
+  displayName: 'Build CLI for Windows'
+
+- task: CopyFiles@2
+  inputs:
+    SourceFolder: '$(OUTPUT_DIR)'
+    Contents: '**'
+    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+  displayName: 'Prepare Artifacts'
+
+- task: CopyToGoogleStorage@15
+  inputs:
+    paths: '$(Build.ArtifactStagingDirectory)/**'
+    bucket: '<bucket>'
+    keyfile: 'key.json'  # Referencing the secure file using the alias
+    destinationDirectory: 'gcscli'
+    clear: true
+  displayName: 'Upload CLI tool to GCS bucket'
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    ArtifactName: 'cli'
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+  displayName: 'Publish Artifacts'
